@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package record.v1;
+
+option go_package = "github.com/alkur-gh/kmpv2/api/record_v1";
+
+message Record {
+    string key = 1;
+    bytes value = 2;
+}
+
+message Records {
+    repeated Record records = 1;
+}
