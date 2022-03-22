@@ -20,8 +20,8 @@ func TestPutGetDelete(t *testing.T) {
 		t.Errorf("Delete(%v) error: %v", want.Key, err)
 	}
 	_, err = s.Get(want.Key)
-	if _, ok := err.(RecordNotFound); !ok {
-		t.Errorf("Get(%v) expected RecordNotFound error; but got: %v", want.Key, err)
+	if _, ok := err.(api.ErrRecordNotFound); !ok {
+		t.Errorf("Get(%v) expected ErrRecordNotFound error; but got: %v", want.Key, err)
 	}
 }
 
@@ -52,8 +52,8 @@ func TestReset(t *testing.T) {
 		t.Errorf("Reset() unexpected error: %v", err)
 	}
 	_, err := s.Get(r.Key)
-	if _, ok := err.(RecordNotFound); !ok {
-		t.Errorf("Get(%v) expected RecordNotFound error; but got: %v", r.Key, err)
+	if _, ok := err.(api.ErrRecordNotFound); !ok {
+		t.Errorf("Get(%v) expected ErrRecordNotFound error; but got: %v", r.Key, err)
 	}
 }
 

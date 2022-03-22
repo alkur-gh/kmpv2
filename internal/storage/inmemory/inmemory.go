@@ -10,14 +10,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type RecordNotFound struct {
-	key string
-}
-
-func (rnf RecordNotFound) Error() string {
-	return fmt.Sprintf("record with key %q not found", rnf.key)
-}
-
 type storage struct {
 	sync.RWMutex
 	m map[string]*api.Record
@@ -45,13 +37,13 @@ func (s *storage) Put(r *api.Record) error {
 }
 
 // Get returns record associated with the given key.
-// If record not found, RecordNotFound error is returned.
+// If record not found, ErrRecordNotFound error is returned.
 func (s *storage) Get(key string) (*api.Record, error) {
 	s.RLock()
 	defer s.RUnlock()
 	r, ok := s.m[key]
 	if !ok {
-		return nil, RecordNotFound{key: key}
+		return nil, api.ErrRecordNotFound{Key: key}
 	}
 	return r, nil
 }
