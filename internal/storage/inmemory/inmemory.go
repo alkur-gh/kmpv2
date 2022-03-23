@@ -32,6 +32,7 @@ func New(logger *log.Logger) (*storage, error) {
 func (s *storage) Put(r *api.Record) error {
 	s.Lock()
 	defer s.Unlock()
+	s.l.Printf("Put(%v)", r)
 	s.m[r.Key] = r
 	return nil
 }
@@ -41,6 +42,7 @@ func (s *storage) Put(r *api.Record) error {
 func (s *storage) Get(key string) (*api.Record, error) {
 	s.RLock()
 	defer s.RUnlock()
+	s.l.Printf("Get(%v)", key)
 	r, ok := s.m[key]
 	if !ok {
 		return nil, api.ErrRecordNotFound{Key: key}
@@ -52,6 +54,7 @@ func (s *storage) Get(key string) (*api.Record, error) {
 func (s *storage) Delete(key string) error {
 	s.Lock()
 	defer s.Unlock()
+	s.l.Printf("Delete(%v)", key)
 	delete(s.m, key)
 	return nil
 }
@@ -60,19 +63,30 @@ func (s *storage) Delete(key string) error {
 func (s *storage) Reset() error {
 	s.Lock()
 	defer s.Unlock()
+	s.l.Printf("Reset()")
 	s.m = make(map[string]*api.Record)
 	return nil
+}
+
+func (s *storage) GetAll() ([]*api.Record, error) {
+	s.l.Printf("GetAll()")
+	s.RLock()
+	defer s.RUnlock()
+	var rr []*api.Record
+	for _, r := range s.m {
+		rr = append(rr, r)
+	}
+	return rr, nil
 }
 
 // Save serializes storage into the given writer.
 // Inefficient serialization but good for now.
 func (s *storage) Save(w io.Writer) error {
-	var rr []*api.Record
-	s.RLock()
-	for _, r := range s.m {
-		rr = append(rr, r)
+	s.l.Printf("Save()")
+	rr, err := s.GetAll()
+	if err != nil {
+		return fmt.Errorf("get records: %v", err)
 	}
-	s.RUnlock()
 	bytes, err := proto.Marshal(&api.Records{Records: rr})
 	if err != nil {
 		return fmt.Errorf("save marshal: %v", err)
@@ -86,6 +100,7 @@ func (s *storage) Save(w io.Writer) error {
 
 // Load deserializes storage from the given reader.
 func (s *storage) Load(r io.Reader) error {
+	s.l.Printf("Load()")
 	bytes, err := io.ReadAll(r)
 	if err != nil {
 		return fmt.Errorf("load readall: %v", err)

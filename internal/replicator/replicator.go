@@ -143,6 +143,19 @@ func (r *replicator) Leave() error {
 	return r.membership.Leave()
 }
 
+func (r *replicator) Members() ([]raft.Server, error) {
+	future := r.raft.GetConfiguration()
+	if err := future.Error(); err != nil {
+		return nil, err
+	}
+	conf := future.Configuration()
+	return conf.Servers, nil
+}
+
+func (r *replicator) Leader() (raft.ServerAddress, error) {
+	return r.raft.Leader(), nil
+}
+
 const (
 	putCode    = 0
 	deleteCode = 1
