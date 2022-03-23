@@ -11,6 +11,7 @@ import (
 	"github.com/alkur-gh/kmpv2/internal/replicator"
 	"github.com/alkur-gh/kmpv2/internal/storage/inmemory"
 	"github.com/gin-gonic/gin"
+    "github.com/gin-contrib/cors"
 )
 
 var idp = flag.String("id", "node", "node id")
@@ -56,6 +57,8 @@ func main() {
 	}
 
 	r := gin.Default()
+
+    r.Use(cors.Default())
 
 	r.GET("/", func(c *gin.Context) {
 		c.IndentedJSON(http.StatusOK, gin.H{

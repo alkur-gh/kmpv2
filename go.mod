@@ -3,6 +3,7 @@ module github.com/alkur-gh/kmpv2
 go 1.17
 
 require (
+	github.com/gin-contrib/cors v1.3.1
 	github.com/gin-gonic/gin v1.7.7
 	github.com/hashicorp/raft v1.3.6
 	github.com/hashicorp/raft-boltdb/v2 v2.2.1
