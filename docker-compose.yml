@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  node-0:
+    image: alkur-gh/kmp:latest
+    ports:
+      - "8080:8080"
+  node-1:
+    image: alkur-gh/kmp:latest
+    ports:
+      - "8081:8080"
+  node-2:
+    image: alkur-gh/kmp:latest
+    ports:
+      - "8082:8080"

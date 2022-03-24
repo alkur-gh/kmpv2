@@ -2,113 +2,81 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	api "github.com/alkur-gh/kmpv2/api/v1"
-	"github.com/alkur-gh/kmpv2/internal/replicator"
-	"github.com/alkur-gh/kmpv2/internal/storage/inmemory"
+	"github.com/alkur-gh/kmpv2/internal/manager"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-    "github.com/gin-contrib/cors"
+	"github.com/phayes/freeport"
 )
 
-var idp = flag.String("id", "node", "node id")
-var baseDirp = flag.String("basedir", "", "base dir for data")
-var raftBindAddrp = flag.String("raft_addr", "127.0.0.1:8001", "raft address")
-var serfBindAddrp = flag.String("serf_addr", "127.0.0.1:8002", "serf address")
-var httpBindAddrp = flag.String("http_addr", "127.0.0.1:8080", "http address")
-var bootstrapp = flag.Bool("bootstrap", false, "bootstrap")
+var hostname = flag.String("hostname", "127.0.0.1", "default hostname")
+var httpAddr = flag.String("http_addr", "0.0.0.0:8080", "http address")
 
-func parseFlags() {
-	flag.Parse()
-	if *baseDirp == "" {
-		dir, err := os.MkdirTemp("", "replicator-test-*")
-		if err != nil {
-			log.Fatalf("os.CreateTemp() error: %v", err)
-		}
-		err = os.Mkdir(filepath.Join(dir, "raft"), 0777)
-		if err != nil {
-			log.Fatalf("error: %v", err)
-		}
-		*baseDirp = dir
+func freeAddress() (string, error) {
+	port, err := freeport.GetFreePort()
+	if err != nil {
+		return "", err
 	}
+	return fmt.Sprintf("%s:%d", *hostname, port), nil
 }
 
 func main() {
-	parseFlags()
-
-	storage, err := inmemory.New(log.New(os.Stdout, "[storage] ", log.Flags()))
+	flag.Parse()
+	m, err := manager.New()
 	if err != nil {
-		log.Fatalf("failed to create storage: %v", err)
+		log.Fatalf("failed to create replication manager: %v", err)
 	}
-	repl, err := replicator.New(replicator.Config{
-		ID:           *idp,
-		BaseDir:      *baseDirp,
-		RaftBindAddr: *raftBindAddrp,
-		SerfBindAddr: *serfBindAddrp,
-		Bootstrap:    *bootstrapp,
-		Storage:      storage,
-	})
-	_ = repl
-	if err != nil {
-		log.Fatalf("failed to create replicator: %v", err)
-	}
-
 	r := gin.Default()
+	r.Use(cors.Default())
 
-    r.Use(cors.Default())
-
-	r.GET("/", func(c *gin.Context) {
-		c.IndentedJSON(http.StatusOK, gin.H{
-			"message": "hello, world!",
-		})
+	r.GET("/status", func(c *gin.Context) {
+		info, err := m.StatusInfo()
+		if err != nil {
+			status := http.StatusInternalServerError
+			// dont know correct error code for ErrNotStarted
+			c.IndentedJSON(status, gin.H{
+				"message": err.Error(),
+			})
+			return
+		}
+		c.IndentedJSON(http.StatusOK, &info)
 	})
 
-	r.GET("/status/members", func(c *gin.Context) {
-		members, err := repl.Members()
+	r.Any("/control/start", func(c *gin.Context) {
+		var config manager.Config
+		if err := c.BindJSON(&config); err != nil {
+			return
+		}
+		if config.ID == "" || !config.Bootstrap && len(config.JoinAddrs) == 0 {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		var err error
+		if config.SerfAddr == "" {
+			config.SerfAddr, err = freeAddress()
+		}
+		if err == nil && config.RaftAddr == "" {
+			config.RaftAddr, err = freeAddress()
+		}
+		if err == nil {
+			err = m.Start(config)
+		}
 		if err != nil {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{
 				"message": err.Error(),
 			})
-			return
-		}
-		c.IndentedJSON(http.StatusOK, members)
-	})
-
-	r.GET("/status/leader", func(c *gin.Context) {
-		leader, err := repl.Leader()
-		if err != nil {
-			c.IndentedJSON(http.StatusInternalServerError, gin.H{
-				"message": err.Error(),
-			})
-			return
-		}
-		c.IndentedJSON(http.StatusOK, gin.H{
-			"address": string(leader),
-		})
-	})
-
-	r.Any("/control/join", func(c *gin.Context) {
-		var data struct {
-			Address string `json:"address"`
-		}
-		if err := c.BindJSON(&data); err != nil {
-			return
-		}
-		if err := repl.Join([]string{data.Address}); err != nil {
-			c.IndentedJSON(http.StatusInternalServerError, gin.H{
-				"message": err.Error(),
-			})
-			return
 		}
 		c.Status(http.StatusOK)
 	})
 
-	r.Any("/control/leave", func(c *gin.Context) {
-		if err := repl.Leave(); err != nil {
-			c.IndentedJSON(http.StatusInternalServerError, gin.H{
+	r.Any("/control/stop", func(c *gin.Context) {
+		if err := m.Stop(); err != nil {
+			status := http.StatusInternalServerError
+			c.IndentedJSON(status, gin.H{
 				"message": err.Error(),
 			})
 			return
@@ -117,19 +85,22 @@ func main() {
 	})
 
 	r.GET("/records", func(c *gin.Context) {
-		rr, err := storage.GetAll()
+		rr, err := m.GetAll()
 		if err != nil {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{
 				"message": err.Error(),
 			})
 			return
 		}
+		if rr == nil {
+			rr = []*api.Record{}
+		}
 		c.IndentedJSON(http.StatusOK, rr)
 	})
 
 	r.GET("/records/:key", func(c *gin.Context) {
 		key := c.Param("key")
-		rec, err := storage.Get(key)
+		rec, err := m.Get(key)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if _, ok := err.(api.ErrRecordNotFound); ok {
@@ -150,7 +121,7 @@ func main() {
 			return
 		}
 		rec.Key = key
-		if err := repl.Put(&rec); err != nil {
+		if err := m.Put(&rec); err != nil {
 			status := http.StatusInternalServerError
 			c.IndentedJSON(status, gin.H{
 				"message": err.Error(),
@@ -162,7 +133,7 @@ func main() {
 
 	r.DELETE("/records/:key", func(c *gin.Context) {
 		key := c.Param("key")
-		if err := repl.Delete(key); err != nil {
+		if err := m.Delete(key); err != nil {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{
 				"message": err.Error(),
 			})
@@ -171,5 +142,5 @@ func main() {
 		c.Status(http.StatusOK)
 	})
 
-	r.Run(*httpBindAddrp)
+	r.Run(*httpAddr)
 }

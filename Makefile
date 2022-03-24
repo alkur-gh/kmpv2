@@ -1,8 +1,12 @@
 
+.PHONY: run
+run: web
+
+
 .PHONY: web
 web:
 	@goimports -w .
-	@go run cmd/http/main.go -bootstrap
+	@go run cmd/http/main.go
 
 .PHONY: test
 test:
