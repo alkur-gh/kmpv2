@@ -1,3 +1,4 @@
+// Package manager wraps replicator and storage for safe operations.
 package manager
 
 import (
@@ -39,10 +40,14 @@ type Manager struct {
 	replicator *replicator.Replicator
 }
 
+// New creates new replication manager. The node isn't ready to operate until
+// Start method is called.
 func New() (*Manager, error) {
 	return &Manager{started: false}, nil
 }
 
+// Start creates storage and replicator over that storage and uses it
+// for subsequent operations.
 func (m *Manager) Start(config Config) (err error) {
 	m.Lock()
 	defer m.Unlock()
@@ -80,6 +85,7 @@ type StatusInfo struct {
 	Peers  []string
 }
 
+// StatusInfo returns current status of cluster.
 func (m *Manager) StatusInfo() (info StatusInfo, err error) {
 	m.RLock()
 	defer m.RUnlock()
@@ -101,6 +107,7 @@ func (m *Manager) StatusInfo() (info StatusInfo, err error) {
 	return info, nil
 }
 
+// Put replicates and stores the record.
 func (m *Manager) Put(r *api.Record) error {
 	m.RLock()
 	defer m.RUnlock()
@@ -110,6 +117,7 @@ func (m *Manager) Put(r *api.Record) error {
 	return m.replicator.Put(r)
 }
 
+// Get returns record with given key directly from storage.
 func (m *Manager) Get(key string) (*api.Record, error) {
 	m.RLock()
 	defer m.RUnlock()
@@ -119,6 +127,7 @@ func (m *Manager) Get(key string) (*api.Record, error) {
 	return m.storage.Get(key)
 }
 
+// GetAll returns all records directly from storage.
 func (m *Manager) GetAll() ([]*api.Record, error) {
 	m.RLock()
 	defer m.RUnlock()
@@ -128,6 +137,7 @@ func (m *Manager) GetAll() ([]*api.Record, error) {
 	return m.storage.GetAll()
 }
 
+// Delete deletes node from storage through replicator.
 func (m *Manager) Delete(key string) error {
 	m.RLock()
 	defer m.RUnlock()
@@ -137,6 +147,7 @@ func (m *Manager) Delete(key string) error {
 	return m.replicator.Delete(key)
 }
 
+// Stop leaves current cluster and cleans up.
 func (m *Manager) Stop() error {
 	m.Lock()
 	defer m.Unlock()
