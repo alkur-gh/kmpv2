@@ -31,14 +31,15 @@ type Membership interface {
 
 type Config struct {
 	ID           string
+	Bootstrap    bool
 	BaseDir      string
 	RaftBindAddr string
 	SerfBindAddr string
-	Bootstrap    bool
+	JoinAddrs    []string
 	Storage      Storage
 }
 
-type replicator struct {
+type Replicator struct {
 	config          Config
 	storage         Storage
 	raft            *raft.Raft
@@ -47,9 +48,9 @@ type replicator struct {
 }
 
 // New returns new ready to use replicator.
-func New(config Config) (*replicator, error) {
+func New(config Config) (*Replicator, error) {
 	var err error
-	r := &replicator{
+	r := &Replicator{
 		config:  config,
 		storage: config.Storage,
 	}
@@ -57,16 +58,14 @@ func New(config Config) (*replicator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("setupRaft: %v", err)
 	}
-	if config.Bootstrap {
-		err = r.setupMembership()
-		if err != nil {
-			return nil, fmt.Errorf("setupMembership: %v", err)
-		}
+	err = r.setupMembership()
+	if err != nil {
+		return nil, fmt.Errorf("setupMembership: %v", err)
 	}
 	return r, nil
 }
 
-func (r *replicator) setupRaft() error {
+func (r *Replicator) setupRaft() error {
 	c := raft.DefaultConfig()
 	c.LocalID = raft.ServerID(r.config.ID)
 	dir := filepath.Join(r.config.BaseDir, "raft")
@@ -114,7 +113,7 @@ func (r *replicator) setupRaft() error {
 	return nil
 }
 
-func (r *replicator) setupMembership() error {
+func (r *Replicator) setupMembership() error {
 	var err error
 	r.membership, err = membership.New(&raftMembershipHandler{r.raft}, membership.Config{
 		NodeName: r.config.ID,
@@ -123,24 +122,39 @@ func (r *replicator) setupMembership() error {
 			"raft_addr": r.config.RaftBindAddr,
 		},
 	})
-	return err
-}
-
-// Join joins the replicator to cluster.
-func (r *replicator) Join(cluster []string) error {
-	r.membershipMutex.Lock()
-	defer r.membershipMutex.Unlock()
-	if err := r.setupMembership(); err != nil {
-		return fmt.Errorf("setupMembership() error: %v", err)
+	if err != nil {
+		return err
 	}
-	return r.membership.Join(cluster)
+	if !r.config.Bootstrap {
+		return r.membership.Join(r.config.JoinAddrs)
+	}
+	return nil
 }
 
-// Leave leaves current cluster.
-func (r *replicator) Leave() error {
-	r.membershipMutex.Lock()
-	defer r.membershipMutex.Unlock()
-	return r.membership.Leave()
+// Close cleans up and shutdowns the replicator.
+func (r *Replicator) Close() error {
+	if err := r.membership.Leave(); err != nil {
+		return err
+	}
+	if err := r.raft.Shutdown().Error(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Servers returns servers participating in replication.
+func (r *Replicator) Servers() ([]raft.Server, error) {
+	future := r.raft.GetConfiguration()
+	if err := future.Error(); err != nil {
+		return nil, err
+	}
+	conf := future.Configuration()
+	return conf.Servers, nil
+}
+
+// Leader returns id of current replication leader.
+func (r *Replicator) Leader() (string, error) {
+	return string(r.raft.Leader()), nil
 }
 
 const (
@@ -149,7 +163,7 @@ const (
 )
 
 // Put replicates the put command and returns result of applying it on storage.
-func (r *replicator) Put(rec *api.Record) error {
+func (r *Replicator) Put(rec *api.Record) error {
 	recBytes, err := proto.Marshal(rec)
 	if err != nil {
 		return err
@@ -169,12 +183,12 @@ func (r *replicator) Put(rec *api.Record) error {
 }
 
 // Get returns record stored in current node.
-func (r *replicator) Get(key string) (*api.Record, error) {
+func (r *Replicator) Get(key string) (*api.Record, error) {
 	return r.storage.Get(key)
 }
 
 // Delete replicates the delete command and returns result of applying the command.
-func (r *replicator) Delete(key string) error {
+func (r *Replicator) Delete(key string) error {
 	keyBytes := []byte(key)
 	bytes := make([]byte, 1+len(keyBytes))
 	bytes[0] = deleteCode
@@ -191,7 +205,7 @@ func (r *replicator) Delete(key string) error {
 }
 
 // Apply implements raft.FSM.Apply.
-func (r *replicator) Apply(entry *raft.Log) interface{} {
+func (r *Replicator) Apply(entry *raft.Log) interface{} {
 	if len(entry.Data) < 1 {
 		return fmt.Errorf("expected non empty data")
 	}
@@ -210,12 +224,12 @@ func (r *replicator) Apply(entry *raft.Log) interface{} {
 }
 
 // Snapshot implements raft.FSM.Snapshot.
-func (r *replicator) Snapshot() (raft.FSMSnapshot, error) {
+func (r *Replicator) Snapshot() (raft.FSMSnapshot, error) {
 	return r, nil
 }
 
 // Persist implements raft.FSMSnapshot.Persist.
-func (r *replicator) Persist(sink raft.SnapshotSink) error {
+func (r *Replicator) Persist(sink raft.SnapshotSink) error {
 	if err := r.storage.Save(sink); err != nil {
 		return sink.Cancel()
 	}
@@ -223,10 +237,10 @@ func (r *replicator) Persist(sink raft.SnapshotSink) error {
 }
 
 // Release implements raft.FSMSnapshot.Release.
-func (r *replicator) Release() {}
+func (r *Replicator) Release() {}
 
 // Restore implements raft.FSM.Restore.
-func (r *replicator) Restore(snapshot io.ReadCloser) error {
+func (r *Replicator) Restore(snapshot io.ReadCloser) error {
 	if err := r.storage.Load(snapshot); err != nil {
 		snapshot.Close()
 		return err

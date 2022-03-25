@@ -116,27 +116,24 @@ func TestSingleNodeRecovery(t *testing.T) {
 	}
 }
 
-func TestMultipleNodesPutGetDelete(t *testing.T) {
+func ITestMultipleNodesPutGetDelete(t *testing.T) {
 	const N = 3
 	var cfgs []Config
-	var rs []*replicator
+	var rs []*Replicator
 	for i := 0; i < N; i++ {
 		cfg := generateConfig(t)
 		cfg.ID = fmt.Sprintf("node-%d", i)
 		cfg.Bootstrap = i == 0
+		if i > 0 {
+			waitRaftLeader(t, rs[0])
+			cfg.JoinAddrs = []string{cfgs[0].SerfBindAddr}
+		}
 		r, err := New(cfg)
 		if err != nil {
 			t.Fatalf("New(%v) error: %v", cfg, err)
 		}
 		cfgs = append(cfgs, cfg)
 		rs = append(rs, r)
-	}
-	waitRaftLeader(t, rs[0])
-	cluster := []string{cfgs[0].SerfBindAddr}
-	for _, r := range rs[1:] {
-		if err := r.Join(cluster); err != nil {
-			t.Errorf("Join(%v) error: %v", cluster, err)
-		}
 	}
 	want := &api.Record{
 		Key:   "key 1",
@@ -208,7 +205,7 @@ func generateConfig(t *testing.T) Config {
 	}
 }
 
-func waitRaftLeader(t *testing.T, r *replicator) {
+func waitRaftLeader(t *testing.T, r *Replicator) {
 	eventually(t, 10*time.Second, 100*time.Millisecond, func() bool {
 		return r.raft.Leader() != ""
 	})

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/hashicorp/serf/serf"
 )
@@ -47,6 +48,7 @@ func (m *membership) setupSerf() error {
 	}
 	serfConfig := serf.DefaultConfig()
 	serfConfig.Init()
+	serfConfig.ReconnectTimeout = 10 * time.Second
 	serfConfig.NodeName = m.config.NodeName
 	serfConfig.Tags = m.config.Tags
 	serfConfig.MemberlistConfig.BindAddr = addr.IP.String()
@@ -91,7 +93,7 @@ func (m *membership) eventHandler() {
 					log.Printf("handleJoin(%v) error: %v", member, err)
 				}
 			}
-		case serf.EventMemberLeave:
+		case serf.EventMemberLeave, serf.EventMemberFailed:
 			for _, member := range e.(serf.MemberEvent).Members {
 				if m.isLocal(member) {
 					continue
