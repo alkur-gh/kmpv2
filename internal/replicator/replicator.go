@@ -12,6 +12,7 @@ import (
 	"github.com/alkur-gh/kmpv2/internal/membership"
 	"github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
+	"github.com/hashicorp/serf/serf"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -27,6 +28,7 @@ type Storage interface {
 type Membership interface {
 	Join([]string) error
 	Leave() error
+	Members() []serf.Member
 }
 
 type Config struct {
@@ -62,7 +64,54 @@ func New(config Config) (*Replicator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("setupMembership: %v", err)
 	}
+	go r.syncRaftAndSerf()
 	return r, nil
+}
+
+func (r *Replicator) syncRaftAndSerf() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for _ = range ticker.C {
+		if r.raft.State() == raft.Shutdown {
+			break
+		} else if r.raft.State() != raft.Leader {
+			continue
+		}
+		raftServers := make(map[string]string)
+		if srvs, err := r.Servers(); err != nil {
+			fmt.Fprintf(os.Stderr, "syncRaftAndSerf: %v", err)
+			continue
+		} else {
+			for _, s := range srvs {
+				raftServers[string(s.ID)] = string(s.Address)
+			}
+		}
+		serfServers := make(map[string]string)
+		for _, m := range r.membership.Members() {
+			if m.Status == serf.StatusAlive {
+				serfServers[m.Name] = m.Tags["raft_addr"]
+			}
+		}
+		for id, addr := range serfServers {
+			if _, ok := raftServers[id]; !ok {
+				future := r.raft.AddVoter(raft.ServerID(id), raft.ServerAddress(addr), 0, time.Second)
+				if err := future.Error(); err != nil {
+					fmt.Fprintf(os.Stderr, "syncRaftAndSerf: failed to add voter: %v", err)
+				}
+			}
+		}
+		for id, _ := range raftServers {
+			if _, ok := serfServers[id]; !ok {
+				future := r.raft.RemoveServer(raft.ServerID(id), 0, time.Second)
+				if err := future.Error(); err != nil {
+					fmt.Fprintf(os.Stderr, "syncRaftAndSerf: failed to remove voter: %v", err)
+				}
+			}
+		}
+		//println("sync: tick")
+		//fmt.Printf("[%s] raft nodes: %s\n", r.config.ID, raftServers)
+		//fmt.Printf("[%s] serf nodes: %s\n", r.config.ID, serfServers)
+	}
 }
 
 func (r *Replicator) setupRaft() error {

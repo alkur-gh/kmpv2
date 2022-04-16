@@ -116,7 +116,7 @@ func TestSingleNodeRecovery(t *testing.T) {
 	}
 }
 
-func ITestMultipleNodesPutGetDelete(t *testing.T) {
+func TestMultipleNodesPutGetDelete(t *testing.T) {
 	const N = 3
 	var cfgs []Config
 	var rs []*Replicator
@@ -173,6 +173,82 @@ func ITestMultipleNodesPutGetDelete(t *testing.T) {
 		}
 		return true
 	})
+}
+
+func TestLeaderLeavesCluster(t *testing.T) {
+	const N = 3
+	var cfgs []Config
+	var rs []*Replicator
+	for i := 0; i < N; i++ {
+		cfg := generateConfig(t)
+		cfg.ID = fmt.Sprintf("node-%d", i)
+		cfg.Bootstrap = i == 0
+		if i > 0 {
+			waitRaftLeader(t, rs[0])
+			cfg.JoinAddrs = []string{cfgs[0].SerfBindAddr}
+		}
+		r, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New(%v) error: %v", cfg, err)
+		}
+		cfgs = append(cfgs, cfg)
+		rs = append(rs, r)
+	}
+
+	eventually(t, 2*time.Second, 100*time.Millisecond, func() bool {
+		for _, r := range rs {
+			servers, _ := r.Servers()
+			if len(servers) != 3 {
+				return false
+			}
+		}
+		return true
+	})
+
+	for _, r := range rs {
+		servers, _ := r.Servers()
+		t.Log(servers)
+	}
+
+	if err := rs[0].Close(); err != nil {
+		t.Fatalf("Leader.Close() error: %v", err)
+	}
+
+	oldLeader := rs[0].config.RaftBindAddr
+
+	rs = rs[1:]
+
+	eventually(t, 5*time.Second, 500*time.Millisecond, func() bool {
+		var l1, l2 string
+		if rl, err := rs[0].Leader(); err != nil {
+			t.Errorf("r.Leader() error: %v", err)
+		} else {
+			l1 = string(rl)
+		}
+		if rl, err := rs[1].Leader(); err != nil {
+			t.Errorf("r.Leader() error: %v", err)
+		} else {
+			l2 = string(rl)
+		}
+		return l1 != oldLeader && l1 != "" && l2 != oldLeader && l2 != ""
+	})
+
+	t.Log("leader changed")
+
+	eventually(t, 5*time.Second, 100*time.Millisecond, func() bool {
+		for _, r := range rs {
+			servers, _ := r.Servers()
+			if len(servers) != 2 {
+				return false
+			}
+		}
+		return true
+	})
+
+	for _, r := range rs {
+		servers, _ := r.Servers()
+		t.Log(servers)
+	}
 }
 
 func generateConfig(t *testing.T) Config {
