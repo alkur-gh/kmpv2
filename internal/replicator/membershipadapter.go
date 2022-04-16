@@ -21,9 +21,19 @@ func (h *raftMembershipHandler) Join(m serf.Member) error {
 }
 
 func (h *raftMembershipHandler) Leave(m serf.Member) error {
+	return h.tryLeave(m, 0, 3)
+}
+
+func (h *raftMembershipHandler) tryLeave(m serf.Member, count, max int) error {
+	if count >= max {
+		return fmt.Errorf("rmh failed to remove server from raft cluster: tried %d times", max)
+	}
 	future := h.raft.RemoveServer(raft.ServerID(m.Name), 0, time.Second)
 	if err := future.Error(); err != nil {
-		return fmt.Errorf("rmh failed to remove server from raft cluster: %v", err)
+		if err == raft.ErrNotLeader {
+			return h.tryLeave(m, count+1, max)
+		}
+		return fmt.Errorf("rmh failed to remove server from raft cluster: try %d: %v", count, err)
 	}
 	return nil
 }

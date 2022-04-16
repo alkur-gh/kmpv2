@@ -69,6 +69,7 @@ func main() {
 			c.IndentedJSON(http.StatusInternalServerError, gin.H{
 				"message": err.Error(),
 			})
+			return
 		}
 		c.Status(http.StatusOK)
 	})

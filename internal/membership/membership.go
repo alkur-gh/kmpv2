@@ -81,6 +81,10 @@ func (m *membership) Leave() error {
 	return nil
 }
 
+func (m *membership) Members() []serf.Member {
+	return m.serf.Members()
+}
+
 func (m *membership) eventHandler() {
 	for e := range m.eventCh {
 		switch e.EventType() {
